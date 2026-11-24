@@ -102,3 +102,25 @@ describe("switching sources", () => {
     );
   });
 });
+
+
+describe("visitor-selected videos", () => {
+  test("uses a temporary browser object URL and the existing clip pipeline", () => {
+    const selectLocalVideo = statements(methodBody("selectLocalVideo"));
+    expect(selectLocalVideo).toContain("URL.createObjectURL(file)");
+    expect(selectLocalVideo).toContain('kind: "clip"');
+    expect(selectLocalVideo).toContain("url,");
+    expect(selectLocalVideo).not.toMatch(/fetch\\s*\\(/);
+    expect(selectLocalVideo).not.toMatch(/XMLHttpRequest/);
+  });
+
+  test("revokes the local object URL when switching away or detaching", () => {
+    const selectSource = statements(methodBody("selectSource"));
+    expect(selectSource).toContain("this.releaseLocalVideo();");
+    expect(selectSource).toContain("source.url !== this.localVideoUrl");
+
+    const releaseLocalVideo = statements(methodBody("releaseLocalVideo"));
+    expect(releaseLocalVideo).toContain("URL.revokeObjectURL(this.localVideoUrl)");
+    expect(releaseLocalVideo).toContain("this.localVideoUrl = null;");
+  });
+});
