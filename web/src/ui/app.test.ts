@@ -110,7 +110,7 @@ describe("visitor-selected videos", () => {
     expect(selectLocalVideo).toContain("URL.createObjectURL(file)");
     expect(selectLocalVideo).toContain('kind: "clip"');
     expect(selectLocalVideo).toContain("url,");
-    expect(selectLocalVideo).not.toMatch(/fetch\\s*\\(/);
+    expect(selectLocalVideo).not.toMatch(/fetch\s*\(/);
     expect(selectLocalVideo).not.toMatch(/XMLHttpRequest/);
   });
 
