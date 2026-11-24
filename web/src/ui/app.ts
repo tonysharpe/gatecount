@@ -400,9 +400,14 @@ export class ControlRoom {
       this.releaseCamera();
       this.video.srcObject = null;
       this.video.src = new URL(source.url as string, document.baseURI).href;
+    }
+    // Register listeners before explicitly starting the clip load, so an
+    // immediate decode/unsupported-source error is not missed.
+    const metadata = this.awaitMetadata();
+    if (source.kind === "clip") {
       this.video.load();
     }
-    await this.awaitMetadata();
+    await metadata;
     if (source.kind === "camera") {
       // A live stream has nothing to seek to and no first frame until it plays.
       await this.video.play();
@@ -416,7 +421,47 @@ export class ControlRoom {
     if (this.video.readyState >= 1 && this.video.videoWidth > 0) {
       return Promise.resolve();
     }
-    return once(this.video, "loadedmetadata", 15000).then(() => undefined);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        this.video.removeEventListener("loadedmetadata", onLoaded);
+        this.video.removeEventListener("error", onError);
+        this.video.removeEventListener("abort", onAbort);
+      };
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve();
+      };
+      const onLoaded = (): void => {
+        if (this.video.videoWidth > 0 && this.video.videoHeight > 0) {
+          finish();
+        } else {
+          finish(new Error("loadedmetadata arrived without usable video dimensions"));
+        }
+      };
+      const onError = (): void => finish(new Error(describeMediaError(this.video)));
+      const onAbort = (): void => finish(new Error(
+        `video loading was aborted; ${describeMediaError(this.video)}`,
+      ));
+      const timer = setTimeout(() => {
+        finish(new Error(
+          `timed out waiting for loadedmetadata (readyState=${this.video.readyState}, ` +
+          `networkState=${this.video.networkState}, dimensions=${this.video.videoWidth}x${this.video.videoHeight}; ` +
+          describeMediaError(this.video) + ")",
+        ));
+      }, 15000);
+
+      this.video.addEventListener("loadedmetadata", onLoaded);
+      this.video.addEventListener("error", onError);
+      this.video.addEventListener("abort", onAbort);
+      // The error may have been raised while the source was being assigned.
+      if (this.video.error !== null) onError();
+      else if (this.video.readyState >= 1) onLoaded();
+    });
   }
 
   private buildPipeline(): SessionPipeline {
@@ -1190,6 +1235,20 @@ function once(target: EventTarget, type: string, timeoutMs: number): Promise<Eve
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function describeMediaError(video: HTMLVideoElement): string {
+  const error = video.error;
+  if (error === null) return "no MediaError details are available";
+  const labels: Record<number, string> = {
+    1: "MEDIA_ERR_ABORTED",
+    2: "MEDIA_ERR_NETWORK",
+    3: "MEDIA_ERR_DECODE",
+    4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
+  };
+  const label = labels[error.code] ?? "unknown media error";
+  const detail = error.message.trim();
+  return `browser media error ${error.code} (${label})${detail ? `: ${detail}` : ""}`;
 }
 
 /** Boot the demo and keep drawing. */
