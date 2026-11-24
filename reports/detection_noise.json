@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "caveat": "A PROXY for detector box noise, not ground truth. The residual is measured against a median-filtered version of the track's own trajectory, so the filter's smoothing, any identity error in the association, and genuine sub-filter motion are all part of what is reported here. Treat it as the scale of the jitter, not as a measurement of the detector.",
+  "median_filter_frames": 5,
+  "association": "GreedyIoUTracker, whose Track.box is the last OBSERVED detection box; the engine's tracker would report its own Kalman-smoothed boxes instead.",
+  "frames": 735,
+  "tracks_seen": 48,
+  "tracks_contributing": 41,
+  "median_box_width_px": 66.77780151367188,
+  "median_box_height_px": 48.82861328125,
+  "residuals": {
+    "box_width": {
+      "n": 4032,
+      "std_px": 1.0293801649318595,
+      "mae_px": 0.36225790636880056,
+      "p95_abs_px": 1.5659790039062498
+    },
+    "box_height": {
+      "n": 4032,
+      "std_px": 0.5231548635399471,
+      "mae_px": 0.22510501316615514,
+      "p95_abs_px": 1.0368530273437495
+    },
+    "centre_x": {
+      "n": 4032,
+      "std_px": 0.33438352404010824,
+      "mae_px": 0.049936226436070034,
+      "p95_abs_px": 0.1407348632812495
+    },
+    "centre_y": {
+      "n": 4032,
+      "std_px": 0.09713000150521812,
+      "mae_px": 0.018815948849632627,
+      "p95_abs_px": 0.08974914550781249
+    }
+  }
+}
