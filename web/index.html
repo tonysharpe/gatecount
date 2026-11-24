@@ -1,0 +1,404 @@
+<!doctype html>
+<!-- TrafficLens · built by Safdar Hussain · https://github.com/safdar-hussain1 -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="author" content="Safdar Hussain" />
+    <title>TrafficLens — vehicle counting that runs in your browser</title>
+    <meta
+      name="description"
+      content="Draw a line on a traffic video and count the vehicles that cross it, by class and direction. The detector runs in your browser; no frame leaves your device."
+    />
+    <meta name="google-site-verification" content="0SIEfExLTSQj1qvnHWF5A5fY58KVl2lpIEnePP9CtI0" />
+    <link rel="canonical" href="https://safdar-hussain1.github.io/trafficlens/" />
+    <!-- The mark is two shapes: the road's ground and the counting line drawn across it. -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <meta name="theme-color" content="#0a0e12" />
+
+    <!-- Open Graph and Twitter. og-image.png is a screenshot of this page in a
+         real browser, counting the simulated motorway -- not a mock-up. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Safdar Hussain" />
+    <meta property="og:title" content="TrafficLens — vehicle counting that runs in your browser" />
+    <meta
+      property="og:description"
+      content="Draw a line on a traffic video and count the vehicles that cross it, by class and direction. The detector runs in your browser; no frame leaves your device."
+    />
+    <meta property="og:url" content="https://safdar-hussain1.github.io/trafficlens/" />
+    <meta property="og:image" content="https://safdar-hussain1.github.io/trafficlens/og-image.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The TrafficLens live demo at night: a yellow counting line across a six-lane motorway, boxes on the vehicles being followed, and an amber LED counter beside the road."
+    />
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="TrafficLens — vehicle counting that runs in your browser" />
+    <meta
+      name="twitter:description"
+      content="Draw a line on a traffic video and count the vehicles that cross it, by class and direction. The detector runs in your browser; no frame leaves your device."
+    />
+    <meta name="twitter:image" content="https://safdar-hussain1.github.io/trafficlens/og-image.png" />
+    <meta
+      name="twitter:image:alt"
+      content="The TrafficLens live demo at night: a yellow counting line across a six-lane motorway, boxes on the vehicles being followed, and an amber LED counter beside the road."
+    />
+
+    <!-- Structured data: the page as an application you can run, and the
+         repository as its source. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "name": "TrafficLens",
+            "url": "https://safdar-hussain1.github.io/trafficlens/",
+            "description": "Draw a line on a traffic video and count the vehicles that cross it, by class and direction. The detector runs in your browser; no frame leaves your device.",
+            "image": "https://safdar-hussain1.github.io/trafficlens/og-image.png",
+            "applicationCategory": "BusinessApplication",
+            "operatingSystem": "Any (runs in a web browser)",
+            "browserRequirements": "Requires JavaScript and WebAssembly; uses WebGPU where the browser provides it",
+            "isAccessibleForFree": true,
+            "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+            "author": {
+              "@type": "Person",
+              "name": "Safdar Hussain",
+              "url": "https://github.com/safdar-hussain1",
+              "sameAs": [
+                "https://github.com/safdar-hussain1",
+                "https://www.linkedin.com/in/safdar-hussain-a8a61b248"
+              ]
+            }
+          },
+          {
+            "@type": "SoftwareSourceCode",
+            "name": "TrafficLens",
+            "codeRepository": "https://github.com/safdar-hussain1/trafficlens",
+            "programmingLanguage": ["Python", "TypeScript"],
+            "license": "https://opensource.org/licenses/MIT",
+            "author": {
+              "@type": "Person",
+              "name": "Safdar Hussain",
+              "url": "https://github.com/safdar-hussain1",
+              "sameAs": [
+                "https://github.com/safdar-hussain1",
+                "https://www.linkedin.com/in/safdar-hussain-a8a61b248"
+              ]
+            }
+          }
+        ]
+      }
+    </script>
+
+    <script>
+      // Ahead of first paint, and ahead of the bundle: a stored theme has to be
+      // on the document before anything is drawn, or the page flashes the other
+      // theme on every load. The toggle writes localStorage BEFORE it touches
+      // the document, so a reload can never lose the choice.
+      try {
+        var stored = localStorage.getItem("trafficlens-theme");
+        if (stored === "light" || stored === "dark") {
+          document.documentElement.setAttribute("data-theme", stored);
+        }
+      } catch (error) {
+        // Storage can be unavailable (private mode, blocked cookies). The page
+        // then follows the operating system, which is the right default anyway.
+      }
+    </script>
+  </head>
+  <body>
+    <a class="skip-link" href="#control-room">Skip to the live demo</a>
+
+    <header class="site-nav">
+      <div class="wrap site-nav__inner">
+        <a class="brand" href="#top">
+          <svg class="brand__mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+            <rect width="32" height="32" rx="8" fill="#0a0e12" />
+            <path d="M6 18h20" stroke="#f7b500" stroke-width="4" stroke-linecap="round" />
+            <path d="M7 25h4M14 25h4M21 25h4" stroke="#f1f0ea" stroke-width="2.5" stroke-linecap="round" />
+          </svg>
+          <span class="brand__name">TrafficLens</span>
+        </a>
+        <nav class="site-nav__links" aria-label="Site">
+          <a href="#how">How it works</a>
+          <a href="#accuracy">Accuracy</a>
+          <a href="measurements.html">Measurements</a>
+          <a class="site-nav__source" href="https://github.com/safdar-hussain1/trafficlens">
+            <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.22 1.87.87 2.33.66.07-.52.28-.87.5-1.07-1.78-.2-3.65-.89-3.65-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0Z"/></svg>
+            <span>Source</span>
+          </a>
+        </nav>
+        <button class="icon-button theme-toggle" id="theme-toggle" type="button" aria-label="Switch theme">
+          <svg class="theme-toggle__moon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></svg>
+          <svg class="theme-toggle__sun" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4.2"/><path d="M12 2.5v2.2M12 19.3v2.2M4.6 4.6l1.6 1.6M17.8 17.8l1.6 1.6M2.5 12h2.2M19.3 12h2.2M4.6 19.4l1.6-1.6M17.8 6.2l1.6-1.6"/></g></svg>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="wrap">
+          <div class="hero__head">
+            <h1 id="hero-title">Count every vehicle that crosses a line you draw.</h1>
+            <p class="hero__lede">
+              TrafficLens finds and follows each vehicle in a traffic video and counts it once when it
+              crosses your line, by type and by direction. It runs entirely in this browser tab.
+            </p>
+          </div>
+
+          <div class="console" id="control-room">
+            <h2 class="visually-hidden">Live demo</h2>
+            <div class="console__bar">
+              <div class="tabs" id="source-switcher" role="group" aria-label="What to count"></div>
+              <p class="status" id="backend-badge" data-state="checking">
+                <span class="status__dot" aria-hidden="true"></span>
+                <span class="status__state" id="run-state" role="status">Checking this device…</span>
+                <span class="status__perf" id="perf"></span>
+              </p>
+            </div>
+
+            <div class="console__body">
+              <div class="stage">
+                <div class="stage__frame">
+                  <canvas class="stage__ambient" id="stage-ambient" width="32" height="18" aria-hidden="true"></canvas>
+                  <div class="stage__media" id="stage-video">
+                    <canvas id="video-canvas" role="img" aria-label="The road, with a box on every vehicle being followed and the yellow counting line"></canvas>
+                    <button class="handle handle--start" id="handle-start" type="button">
+                      <span class="visually-hidden">Counting line, start point. Arrow keys move it.</span>
+                    </button>
+                    <button class="handle handle--body" id="handle-body" type="button">
+                      <span class="visually-hidden">Whole counting line. Arrow keys move it.</span>
+                    </button>
+                    <button class="handle handle--end" id="handle-end" type="button">
+                      <span class="visually-hidden">Counting line, end point. Arrow keys move it.</span>
+                    </button>
+                    <p class="gate-hint" id="gate-hint" aria-hidden="true">Drag the line</p>
+                    <div class="launch" id="empty-state" hidden>
+                      <button class="launch__button" id="launch-button" type="button">
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M8 5.5v13a1 1 0 0 0 1.5.86l10.6-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></svg>
+                        <span>Run the detector on this video</span>
+                      </button>
+                      <p class="launch__note" id="empty-text">
+                        Downloads the detector and its runtime once, then runs on your device. No video
+                        leaves this tab.
+                      </p>
+                      <progress class="progress" id="load-progress" hidden max="1" value="0"></progress>
+                    </div>
+                    <noscript><p class="noscript">The live demo needs JavaScript.</p></noscript>
+                  </div>
+                </div>
+                <div class="stage__foot">
+                  <p class="stage__caption" id="video-caption">Loading…</p>
+                  <div class="stage__actions">
+                    <div class="traffic" id="traffic-control" role="group" aria-labelledby="traffic-label">
+                      <span class="traffic__label" id="traffic-label">Traffic</span>
+                      <button type="button" data-density="light" aria-pressed="false">Light</button>
+                      <button type="button" data-density="busy" aria-pressed="true">Busy</button>
+                      <button type="button" data-density="rush" aria-pressed="false">Rush hour</button>
+                    </div>
+                    <button class="button button--primary" id="start-button" type="button">Start</button>
+                    <button class="button button--quiet" id="reset-button" type="button">Reset</button>
+                  </div>
+                </div>
+                <p class="status-line" id="status-line" role="alert"></p>
+              </div>
+
+              <section class="readout" aria-label="Live counts">
+                <section class="readout__total" aria-labelledby="total-label">
+                  <h3 class="readout__label" id="total-label">Vehicles counted</h3>
+                  <div class="vms" id="vms" aria-hidden="true"></div>
+                  <p class="visually-hidden"><span id="total-count">0</span> vehicles counted at the line</p>
+                  <p class="readout__since" id="counting-since"></p>
+                </section>
+                <section class="readout__block readout__block--dir" aria-labelledby="direction-label">
+                  <h3 class="readout__label" id="direction-label">By direction</h3>
+                  <ul class="directions" id="direction-counts"></ul>
+                  <div class="split" id="direction-split" data-empty="true" aria-hidden="true"><i></i></div>
+                </section>
+                <section class="readout__block readout__block--types" aria-labelledby="class-label">
+                  <h3 class="readout__label" id="class-label">By vehicle type</h3>
+                  <ul class="types" id="class-counts"></ul>
+                </section>
+                <section class="readout__block readout__block--flow" aria-labelledby="flow-label">
+                  <div class="flow__head">
+                    <h3 class="readout__label" id="flow-label">In the last minute</h3>
+                    <p class="flow__count"><span class="num" id="flow-count">0</span> vehicles</p>
+                  </div>
+                  <div class="flow" id="flow-chart" aria-hidden="true"></div>
+                  <p class="flow__axis" aria-hidden="true"><span>1 min ago</span><span>now</span></p>
+                </section>
+                <section class="readout__block readout__block--feed" aria-labelledby="feed-label">
+                  <h3 class="readout__label" id="feed-label">Just crossed</h3>
+                  <ol class="feed" id="feed"></ol>
+                </section>
+              </section>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="how" id="how" aria-labelledby="how-title">
+        <div class="wrap">
+          <div class="section-head">
+            <h2 id="how-title">How it works</h2>
+            <p>Three steps, all running inside this tab.</p>
+          </div>
+
+          <ol class="steps">
+            <li class="step">
+              <svg class="step__art step__art--detect" viewBox="0 0 320 180" role="img" aria-labelledby="art-detect">
+                <title id="art-detect">Three vehicles on a road, each inside a box labelled with its type.</title>
+                <rect width="320" height="180" rx="14" fill="#0a0e12" />
+                <rect x="0" y="38" width="320" height="104" fill="#161d25" />
+                <path d="M0 38h320M0 142h320" stroke="#4b5866" stroke-width="2" />
+                <path class="art-lanes" d="M0 72.7h320M0 107.3h320" stroke="#3a4652" stroke-width="2" stroke-dasharray="14 12" />
+                <rect x="58" y="46" width="44" height="20" rx="6" fill="#cfd6dd" /><rect x="88" y="49" width="8" height="14" rx="2" fill="#8f9aa5" /><rect x="178" y="81" width="84" height="20" rx="4" fill="#cfd6dd" /><rect x="246" y="83" width="12" height="16" rx="2" fill="#8f9aa5" /><rect x="96" y="115" width="44" height="20" rx="6" fill="#cfd6dd" /><rect x="126" y="118" width="8" height="14" rx="2" fill="#8f9aa5" />
+                <g font-family="Overpass, sans-serif" font-size="10" font-weight="700" fill="#0a0e12">
+                  <g class="art-snap art-snap--1"><rect x="52" y="41" width="56" height="30" rx="3" fill="none" stroke="#3987e5" stroke-width="2" /><rect x="52" y="27" width="26" height="14" rx="2" fill="#3987e5" /><text x="56" y="37.5">Car</text></g>
+                  <g class="art-snap art-snap--2"><rect x="172" y="76" width="96" height="30" rx="3" fill="none" stroke="#d95926" stroke-width="2" /><rect x="172" y="62" width="36" height="14" rx="2" fill="#d95926" /><text x="176" y="72.5">Truck</text></g>
+                  <g class="art-snap art-snap--3"><rect x="90" y="110" width="56" height="30" rx="3" fill="none" stroke="#3987e5" stroke-width="2" /><rect x="90" y="96" width="26" height="14" rx="2" fill="#3987e5" /><text x="94" y="106.5">Car</text></g>
+                </g>
+              </svg>
+              <h3><span class="step__n" aria-hidden="true">1</span>Detect</h3>
+              <p>
+                A YOLO11n detector finds the vehicles in each frame and labels each one car, truck,
+                bus or motorcycle. It runs on your graphics card through WebGPU, or on the processor
+                through WebAssembly.
+              </p>
+            </li>
+
+            <li class="step">
+              <svg class="step__art step__art--track" viewBox="0 0 320 180" role="img" aria-labelledby="art-track">
+                <title id="art-track">The same vehicles, each keeping one ID number, with dots marking where they were in earlier frames.</title>
+                <rect width="320" height="180" rx="14" fill="#0a0e12" />
+                <g class="art-scene">
+                <rect x="0" y="38" width="320" height="104" fill="#161d25" />
+                <path d="M0 38h320M0 142h320" stroke="#4b5866" stroke-width="2" />
+                <path class="art-lanes" d="M0 72.7h320M0 107.3h320" stroke="#3a4652" stroke-width="2" stroke-dasharray="14 12" />
+                  <circle class="art-dot art-dot--1" cx="14" cy="56" r="2.5" fill="#3987e5" opacity="0.35" /><circle class="art-dot art-dot--2" cx="40" cy="56" r="2.5" fill="#3987e5" opacity="0.50" /><circle class="art-dot art-dot--3" cx="66" cy="56" r="2.5" fill="#3987e5" opacity="0.65" /><circle class="art-dot art-dot--4" cx="92" cy="56" r="2.5" fill="#3987e5" opacity="0.80" />
+                  <circle class="art-dot art-dot--1" cx="132" cy="91" r="2.5" fill="#d95926" opacity="0.35" /><circle class="art-dot art-dot--2" cx="158" cy="91" r="2.5" fill="#d95926" opacity="0.50" /><circle class="art-dot art-dot--3" cx="184" cy="91" r="2.5" fill="#d95926" opacity="0.65" /><circle class="art-dot art-dot--4" cx="210" cy="91" r="2.5" fill="#d95926" opacity="0.80" />
+                  <circle class="art-dot art-dot--1" cx="52" cy="125" r="2.5" fill="#3987e5" opacity="0.35" /><circle class="art-dot art-dot--2" cx="78" cy="125" r="2.5" fill="#3987e5" opacity="0.50" /><circle class="art-dot art-dot--3" cx="104" cy="125" r="2.5" fill="#3987e5" opacity="0.65" /><circle class="art-dot art-dot--4" cx="130" cy="125" r="2.5" fill="#3987e5" opacity="0.80" />
+                  <g class="art-drive">
+                    <rect x="102" y="46" width="44" height="20" rx="6" fill="#cfd6dd" /><rect x="132" y="49" width="8" height="14" rx="2" fill="#8f9aa5" /><rect x="200" y="81" width="84" height="20" rx="4" fill="#cfd6dd" /><rect x="268" y="83" width="12" height="16" rx="2" fill="#8f9aa5" /><rect x="140" y="115" width="44" height="20" rx="6" fill="#cfd6dd" /><rect x="170" y="118" width="8" height="14" rx="2" fill="#8f9aa5" />
+                    <g font-family="Overpass, sans-serif" font-size="10" font-weight="700" fill="#0a0e12">
+                      <rect x="96" y="41" width="56" height="30" rx="3" fill="none" stroke="#3987e5" stroke-width="2" /><rect x="96" y="27" width="30" height="14" rx="2" fill="#3987e5" /><text x="100" y="37.5">#12</text>
+                      <rect x="194" y="76" width="96" height="30" rx="3" fill="none" stroke="#d95926" stroke-width="2" /><rect x="194" y="62" width="30" height="14" rx="2" fill="#d95926" /><text x="198" y="72.5">#13</text>
+                      <rect x="134" y="110" width="56" height="30" rx="3" fill="none" stroke="#3987e5" stroke-width="2" /><rect x="134" y="96" width="30" height="14" rx="2" fill="#3987e5" /><text x="138" y="106.5">#14</text>
+                    </g>
+                  </g>
+                </g>
+              </svg>
+              <h3><span class="step__n" aria-hidden="true">2</span>Track</h3>
+              <p>
+                A Kalman filter predicts where each vehicle moves next, and the Hungarian algorithm
+                matches those predictions to the new detections, so every vehicle keeps one ID from
+                frame to frame.
+              </p>
+            </li>
+
+            <li class="step">
+              <svg class="step__art step__art--count" viewBox="0 0 320 180" role="img" aria-labelledby="art-count">
+                <title id="art-count">A yellow counting line across the road. A car whose path has just crossed it adds one to the count.</title>
+                <rect width="320" height="180" rx="14" fill="#0a0e12" />
+                <g class="art-scene">
+                <rect x="0" y="38" width="320" height="104" fill="#161d25" />
+                <path d="M0 38h320M0 142h320" stroke="#4b5866" stroke-width="2" />
+                <path class="art-lanes" d="M0 72.7h320M0 107.3h320" stroke="#3a4652" stroke-width="2" stroke-dasharray="14 12" />
+                  <circle class="art-trace art-trace--1" cx="110" cy="91" r="2.5" fill="#3987e5" opacity="0.6" /><circle class="art-trace art-trace--2" cx="130" cy="91" r="2.5" fill="#3987e5" opacity="0.6" /><circle class="art-trace art-trace--3" cx="150" cy="91" r="2.5" fill="#3987e5" opacity="0.6" /><circle class="art-trace art-trace--4" cx="170" cy="91" r="2.5" fill="#3987e5" opacity="0.6" /><circle class="art-trace art-trace--5" cx="190" cy="91" r="2.5" fill="#3987e5" opacity="0.6" /><circle class="art-trace art-trace--6" cx="230" cy="91" r="2.5" fill="#3987e5" opacity="0.6" /><circle class="art-trace art-trace--7" cx="250" cy="91" r="2.5" fill="#3987e5" opacity="0.6" />
+                  <path class="art-line-glow" d="M200 30v120" stroke="#f7b500" stroke-width="12" stroke-linecap="round" opacity="0" />
+                  <path d="M200 30v120" stroke="#0a0e12" stroke-width="9" stroke-linecap="round" opacity="0.6" />
+                  <path d="M200 30v120" stroke="#f7b500" stroke-width="4" stroke-linecap="round" />
+                  <circle cx="200" cy="30" r="5.5" fill="#f1f0ea" stroke="#f7b500" stroke-width="3" />
+                  <circle cx="200" cy="150" r="5.5" fill="#f1f0ea" stroke="#f7b500" stroke-width="3" />
+                  <circle class="art-ring" cx="200" cy="91" r="13" fill="none" stroke="#f7b500" stroke-width="2" opacity="0.55" />
+                  <g class="art-drive art-drive--count">
+                    <rect x="196" y="81" width="44" height="20" rx="6" fill="#cfd6dd" /><rect x="226" y="84" width="8" height="14" rx="2" fill="#8f9aa5" />
+                    <rect x="190" y="76" width="56" height="30" rx="3" fill="none" stroke="#3987e5" stroke-width="2" />
+                    <g font-family="Overpass, sans-serif" font-size="10" font-weight="700" fill="#0a0e12">
+                      <g class="art-before"><rect x="190" y="62" width="26" height="14" rx="2" fill="#3987e5" /><text x="194" y="72.5">Car</text></g>
+                      <g class="art-after"><rect x="190" y="62" width="38" height="14" rx="2" fill="#3987e5" /><path d="M194 69.5l2.5 2.5 4.5-5" fill="none" stroke="#0a0e12" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /><text x="204" y="72.5">Car</text></g>
+                    </g>
+                  </g>
+                  <g class="art-plus" font-family="Overpass, sans-serif" font-weight="800">
+                    <rect x="250" y="44" width="52" height="24" rx="12" fill="#f7b500" />
+                    <text x="276" y="61" font-size="13" fill="#0a0e12" text-anchor="middle">+1 Car</text>
+                  </g>
+                  <g font-family="Overpass, sans-serif" font-weight="800" font-size="17" text-anchor="middle">
+                    <rect x="14" y="12" width="58" height="26" rx="6" fill="#040608" stroke="#f1f0ea" stroke-opacity="0.1" />
+                    <text class="art-before art-led" x="43" y="31" fill="#ffb31a">17</text>
+                    <text class="art-after art-led" x="43" y="31" fill="#ffb31a">18</text>
+                  </g>
+                </g>
+              </svg>
+              <h3><span class="step__n" aria-hidden="true">3</span>Count</h3>
+              <p>
+                When a tracked vehicle's path crosses your line, it is counted once, by type and by the
+                direction it went. Move the line and counting starts again from there.
+              </p>
+            </li>
+          </ol>
+
+          <p class="how__privacy">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></g></svg>
+            <span>
+              The model downloads once and stays in your browser's cache. Every frame is read, detected
+              and discarded inside the tab, and nothing is uploaded.
+            </span>
+          </p>
+        </div>
+      </section>
+
+      <section class="accuracy" id="accuracy" aria-labelledby="accuracy-title">
+        <div class="wrap">
+          <div class="section-head">
+            <h2 id="accuracy-title">Checked against crossings counted by hand</h2>
+            <p>
+              Every vehicle crossing the line in the motorway clip was labelled frame by frame. The
+              engine's counts were then scored against those labels, one crossing at a time.
+            </p>
+          </div>
+
+          <div class="accuracy__grid">
+            <figure class="tally" data-accuracy="tally"></figure>
+
+            <div class="accuracy__side">
+              <div class="parity">
+                <h3>The same engine in Python and in your browser</h3>
+                <p>
+                  The counting engine is written twice: in Python, where it is benchmarked, and in
+                  TypeScript, which runs on this page. Recorded Python runs are replayed in your browser
+                  and must produce the same tracks and the same crossings.
+                </p>
+                <a class="text-link" href="?selftest=1">Run that check in this browser</a>
+              </div>
+              <a class="button button--outline" href="measurements.html">See every measurement</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-foot">
+      <div class="wrap site-foot__inner">
+        <p class="site-foot__credit">
+          <a href="https://github.com/safdar-hussain1">Built by Safdar Hussain</a>. Source on
+          <a href="https://github.com/safdar-hussain1/trafficlens">GitHub</a>.
+        </p>
+        <p class="site-foot__legal">
+          Engine and site MIT. The detector weights are an export of Ultralytics YOLO11n and are
+          AGPL-3.0; see the <a href="models/MODEL_CARD.md">model card</a> beside the graph. Clips:
+          “Motorway A40 – on bridge above the traffic”, the Sounds of Changes project via Wikimedia
+          Commons (CC&nbsp;BY&nbsp;3.0), and Intel IoT DevKit <em>sample-videos</em>
+          (CC&nbsp;BY&nbsp;4.0), both excerpted and re-encoded for this page; details in
+          <a href="clips/NOTICE.md">clips/NOTICE.md</a>. The typeface is Overpass under the SIL OFL
+          1.1; see <a href="fonts/NOTICE.md">fonts/NOTICE.md</a>.
+        </p>
+      </div>
+    </footer>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
