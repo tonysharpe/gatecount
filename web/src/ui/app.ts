@@ -109,6 +109,8 @@ export class ControlRoom {
   private readonly reducedMotion: boolean;
 
   private source: SourceSpec = SOURCES[0] as SourceSpec;
+  /** Object URL for a visitor-selected video; revoked when that source is left. */
+  private localVideoUrl: string | null = null;
   private frameSize = { width: 0, height: 0 };
   private gate: Segment = { start: [0, 0], end: [1, 1] };
   private pipeline: SessionPipeline | null = null;
@@ -213,9 +215,14 @@ export class ControlRoom {
   async start(): Promise<void> {
     installThemeToggle(this.elements.themeToggle);
 
-    renderSwitcher(this.elements.switcher, this.source.id, (id) => {
-      void this.selectSource(sourceById(id));
-    });
+    renderSwitcher(
+      this.elements.switcher,
+      this.source.id,
+      (id) => {
+        void this.selectSource(sourceById(id));
+      },
+      (file) => this.selectLocalVideo(file),
+    );
     for (const button of [this.elements.startButton, this.elements.launchButton]) {
       button.addEventListener("click", () => {
         void this.toggleRunning();
@@ -250,12 +257,60 @@ export class ControlRoom {
 
   // -- sources ----------------------------------------------------------------
 
+  /** Attach a file chosen by the visitor without sending its bytes anywhere. */
+  private selectLocalVideo(file: File): void {
+    const extension = file.name.toLowerCase().split(".").pop() ?? "";
+    const supportedExtensions = ["mp4", "webm", "mov", "m4v", "ogv"];
+    if (!file.type.startsWith("video/") && !supportedExtensions.includes(extension)) {
+      this.setStatus("Choose a video file, such as MP4, WebM or MOV.");
+      return;
+    }
+
+    const url = URL.createObjectURL(file);
+    const source: SourceSpec = {
+      id: "local-video",
+      label: "Your video",
+      kind: "clip",
+      url,
+      fps: 30,
+      classes: [
+        [0, "person"],
+        [1, "bicycle"],
+        [2, "car"],
+        [3, "motorcycle"],
+        [5, "bus"],
+        [7, "truck"],
+      ],
+      gate: {
+        name: "midline",
+        start: [0, 0.5],
+        end: [1, 0.5],
+        labelPositive: "in",
+        labelNegative: "out",
+        expectedDirection: null,
+      },
+      calibrated: false,
+      caption: `${file.name}. Selected from this device; processed in this browser tab.`,
+    };
+    void this.selectSource(source);
+  }
+
   private async selectSource(source: SourceSpec): Promise<void> {
     // Carry "running" across a switch only where nothing new would start
     // without being asked for: the detector is downloaded on a click on Start,
     // never because a tab was changed while the simulation was moving.
     const wasRunning = this.running && (source.kind === "simulation" || this.session !== null);
     this.stop();
+    if (this.localVideoUrl !== null && source.url !== this.localVideoUrl) {
+      this.video.pause();
+      this.video.srcObject = null;
+      this.video.removeAttribute("src");
+      this.video.load();
+      this.releaseLocalVideo();
+    }
+    if (source.id === "local-video" && source.url !== null) {
+      this.localVideoUrl = source.url;
+    }
     this.pausedHere = false;
     if (this.runState === "paused") {
       // A pause belonged to the clip being left; the new one has not started.
@@ -1037,6 +1092,7 @@ export class ControlRoom {
     this.video.srcObject = null;
     this.video.removeAttribute("src");
     this.video.load();
+    this.releaseLocalVideo();
   }
 
   private renderPanels(): void {
@@ -1089,6 +1145,13 @@ export class ControlRoom {
       for (const track of stream.getTracks()) {
         track.stop();
       }
+    }
+  }
+
+  private releaseLocalVideo(): void {
+    if (this.localVideoUrl !== null) {
+      URL.revokeObjectURL(this.localVideoUrl);
+      this.localVideoUrl = null;
     }
   }
 }
