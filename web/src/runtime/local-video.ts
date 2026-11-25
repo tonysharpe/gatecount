@@ -97,7 +97,13 @@ async function getBrowserFFmpeg(): Promise<BrowserFFmpeg> {
     });
     const coreURL = await fetchBlobUrl(FFMPEG_CORE_BASE_URL + "/ffmpeg-core.js", "text/javascript");
     const wasmURL = await fetchBlobUrl(FFMPEG_CORE_BASE_URL + "/ffmpeg-core.wasm", "application/wasm");
-    const classWorkerURL = FFMPEG_CLASS_WORKER_URL;
+    // Module workers must be same-origin. Use a same-origin blob entry point
+    // that imports the CDN module; its own relative imports then resolve against
+    // the original CDN URL rather than the blob URL.
+    const classWorkerURL = URL.createObjectURL(
+      new Blob([`import "${FFMPEG_CLASS_WORKER_URL}";`], { type: "text/javascript" }),
+    );
+    ffmpegAssetUrls.push(classWorkerURL);
     await ffmpeg.load({ coreURL, wasmURL, classWorkerURL });
     return ffmpeg;
   })();
