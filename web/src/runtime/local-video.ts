@@ -97,7 +97,7 @@ async function getBrowserFFmpeg(): Promise<BrowserFFmpeg> {
     });
     const coreURL = await fetchBlobUrl(FFMPEG_CORE_BASE_URL + "/ffmpeg-core.js", "text/javascript");
     const wasmURL = await fetchBlobUrl(FFMPEG_CORE_BASE_URL + "/ffmpeg-core.wasm", "application/wasm");
-    const classWorkerURL = await fetchBlobUrl(FFMPEG_CLASS_WORKER_URL, "text/javascript");
+    const classWorkerURL = FFMPEG_CLASS_WORKER_URL;
     await ffmpeg.load({ coreURL, wasmURL, classWorkerURL });
     return ffmpeg;
   })();
