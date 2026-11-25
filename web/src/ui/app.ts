@@ -340,10 +340,14 @@ export class ControlRoom {
     this.clearSession();
     this.readout.reset();
 
+    let localDecoder: LocalVideoDecoder | null = null;
     try {
       await this.attachSource(source);
-      if (this.localDecoder !== null) {
-        this.source = { ...source, fps: this.localDecoder.fps };
+      // Read through a method because TypeScript cannot see the assignment
+      // performed inside attachSource() when narrowing this property.
+      localDecoder = this.currentLocalDecoder();
+      if (localDecoder !== null) {
+        this.source = { ...source, fps: localDecoder.fps };
       }
     } catch (error) {
       this.setStatus(
@@ -365,8 +369,8 @@ export class ControlRoom {
     this.frameSize =
       source.kind === "simulation"
         ? { width: CAMERA.width, height: CAMERA.height }
-        : this.localDecoder !== null
-          ? { width: this.localDecoder.canvas.width, height: this.localDecoder.canvas.height }
+        : localDecoder !== null
+          ? { width: localDecoder.canvas.width, height: localDecoder.canvas.height }
           : { width: this.video.videoWidth, height: this.video.videoHeight };
     this.gate = gateSegment(source, this.frameSize);
     this.pipeline = this.buildPipeline();
@@ -390,6 +394,11 @@ export class ControlRoom {
       this.syncPreview();
     }
     this.renderFrame();
+  }
+
+  /** Read decoder state after async source attachment without stale narrowing. */
+  private currentLocalDecoder(): LocalVideoDecoder | null {
+    return this.localDecoder;
   }
 
   private async attachSource(source: SourceSpec): Promise<void> {
