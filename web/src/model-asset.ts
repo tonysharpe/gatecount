@@ -26,3 +26,13 @@ export const MODEL_INPUT_SIZE = 480;
 
 /** Enough of the digest to key a cache and still be readable in devtools. */
 export const MODEL_CONTENT_VERSION = MODEL_SHA256.slice(0, 16);
+
+/**
+ * Larger COCO detector used only for visitor-selected traffic footage.
+ * Generate this file locally in Codespaces; it is intentionally not committed
+ * to GitHub because it is a separately generated model asset.
+ */
+export const LOCAL_MODEL_URL = "models/yolo11s-640.onnx";
+export const LOCAL_MODEL_INPUT_SIZE = 640;
+/** Bump this token if the locally generated ONNX model is replaced. */
+export const LOCAL_MODEL_CONTENT_VERSION = "yolo11s-640-coco-v1";
