@@ -52,9 +52,9 @@ const HEVC_PLUGIN_MODULE_URL =
 const HEVC_WORKER_URL =
   "https://cdn.jsdelivr.net/npm/@hevcjs/mediabunny-plugin@0.1.4/dist/decode-worker.js";
 const HEVC_WASM_GLUE_URL =
-  "https://cdn.jsdelivr.net/npm/@hevcjs/core@1.9.1/dist/wasm/hevc-decode.js";
+  "https://cdn.jsdelivr.net/npm/@hevcjs/core@1.9.1/wasm/hevc-decode.js";
 const HEVC_WASM_BINARY_URL =
-  "https://cdn.jsdelivr.net/npm/@hevcjs/core@1.9.1/dist/wasm/hevc-decode.wasm";
+  "https://cdn.jsdelivr.net/npm/@hevcjs/core@1.9.1/wasm/hevc-decode.wasm";
 
 let decoderRegistration: Promise<void> | null = null;
 
