@@ -28,7 +28,10 @@ import type { CrossingEvent } from "../engine/gate";
 import type { Point } from "../engine/geometry";
 import { SessionPipeline } from "../engine/pipeline";
 import type { TrackView } from "../engine/pipeline";
-import { DETECT_DEFAULT_NMS_IOU } from "../generated/constants";
+import {
+  DETECT_DEFAULT_CONF,
+  DETECT_DEFAULT_NMS_IOU,
+} from "../generated/constants";
 import { MODEL_CONTENT_VERSION, MODEL_INPUT_SIZE, MODEL_URL } from "../model-asset";
 import { probeBackend } from "../runtime/backend";
 import type { BackendProbe } from "../runtime/backend";
@@ -704,7 +707,7 @@ export class ControlRoom {
           input.scale,
           input.padX,
           input.padY,
-          { conf: 0.15, iou: DETECT_DEFAULT_NMS_IOU, keepClasses },
+          { conf: DETECT_DEFAULT_CONF, iou: DETECT_DEFAULT_NMS_IOU, keepClasses },
         );
         this.recordTiming(performance.now() - started);
         this.consume(detections, this.frameIndex, now);
