@@ -21,6 +21,7 @@ type VideoTrack = {
 };
 
 type InputHandle = {
+  getFormat(): Promise<{ name: string; mimeType: string }>;
   getPrimaryVideoTrack(): Promise<VideoTrack | null>;
   dispose(): void;
 };
@@ -75,6 +76,20 @@ async function registerDecoder(): Promise<MediabunnyModule> {
   return mediabunny;
 }
 
+/** Inspect only the first 32 bytes; the selected video remains in this tab. */
+async function inspectLocalFile(file: File): Promise<string> {
+  const bytes = new Uint8Array(await file.slice(0, 32).arrayBuffer());
+  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join(" ");
+  const ascii = [...bytes]
+    .map((byte) => (byte >= 32 && byte <= 126 ? String.fromCharCode(byte) : "."))
+    .join("");
+  const boxType =
+    bytes.length >= 8
+      ? String.fromCharCode(bytes[4] ?? 0, bytes[5] ?? 0, bytes[6] ?? 0, bytes[7] ?? 0)
+      : "unavailable";
+  return `name=${file.name}, size=${file.size} bytes, MIME=${file.type || "(empty)"}, box[4..7]=${boxType}, header(hex)=${hex}, header(text)=${ascii}`;
+}
+
 /** Decodes a local File into a reusable canvas, preserving source timestamps. */
 export class LocalVideoDecoder {
   readonly canvas: HTMLCanvasElement;
@@ -114,13 +129,17 @@ export class LocalVideoDecoder {
   }
 
   static async open(file: File): Promise<LocalVideoDecoder> {
+    const probe = await inspectLocalFile(file);
     const mediabunny = await registerDecoder();
     const input = new mediabunny.Input({
       source: new mediabunny.BlobSource(file),
       formats: mediabunny.ALL_FORMATS,
     });
 
+    let phase = "identifying the container";
     try {
+      const format = await input.getFormat();
+      phase = `reading the ${format.name} (${format.mimeType}) tracks`;
       const track = await input.getPrimaryVideoTrack();
       if (track === null) {
         throw new Error("the selected file contains no video track");
@@ -162,7 +181,10 @@ export class LocalVideoDecoder {
       return new LocalVideoDecoder(input, sink, canvas, firstTimestamp, fps, duration);
     } catch (error) {
       input.dispose();
-      throw error;
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Mediabunny failed while ${phase}: ${detail}. Local file: ${probe}`,
+      );
     }
   }
 
