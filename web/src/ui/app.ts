@@ -36,6 +36,7 @@ import { MODEL_CONTENT_VERSION, MODEL_INPUT_SIZE, MODEL_URL } from "../model-ass
 import { probeBackend } from "../runtime/backend";
 import type { BackendProbe } from "../runtime/backend";
 import { letterbox } from "../runtime/preprocess";
+import { LocalVideoDecoder } from "../runtime/local-video";
 import { decodeYolo } from "../runtime/postprocess";
 import { ORT_ENTRY, browserDeps, createSession, vendoredUrl } from "../runtime/session";
 import type { RuntimeSession } from "../runtime/session";
@@ -107,6 +108,8 @@ export class ControlRoom {
   private readonly video: HTMLVideoElement;
   private readonly videoCtx: CanvasRenderingContext2D;
   private readonly reducedMotion: boolean;
+  private localDecoder: LocalVideoDecoder | null = null;
+  private pendingLocalFile: File | null = null;
 
   private source: SourceSpec = SOURCES[0] as SourceSpec;
   /** Object URL for a visitor-selected video; revoked when that source is left. */
@@ -266,6 +269,7 @@ export class ControlRoom {
       return;
     }
 
+    this.pendingLocalFile = file;
     const url = URL.createObjectURL(file);
     const source: SourceSpec = {
       id: "local-video",
@@ -301,6 +305,8 @@ export class ControlRoom {
     // never because a tab was changed while the simulation was moving.
     const wasRunning = this.running && (source.kind === "simulation" || this.session !== null);
     this.stop();
+    this.localDecoder?.dispose();
+    this.localDecoder = null;
     if (this.localVideoUrl !== null && source.url !== this.localVideoUrl) {
       this.video.pause();
       this.video.srcObject = null;
@@ -333,6 +339,9 @@ export class ControlRoom {
 
     try {
       await this.attachSource(source);
+      if (this.localDecoder !== null) {
+        this.source = { ...source, fps: this.localDecoder.fps };
+      }
     } catch (error) {
       this.setStatus(
         source.kind === "camera"
@@ -353,7 +362,9 @@ export class ControlRoom {
     this.frameSize =
       source.kind === "simulation"
         ? { width: CAMERA.width, height: CAMERA.height }
-        : { width: this.video.videoWidth, height: this.video.videoHeight };
+        : this.localDecoder !== null
+          ? { width: this.localDecoder.canvas.width, height: this.localDecoder.canvas.height }
+          : { width: this.video.videoWidth, height: this.video.videoHeight };
     this.gate = gateSegment(source, this.frameSize);
     this.pipeline = this.buildPipeline();
     this.setPlayable(true);
@@ -387,6 +398,13 @@ export class ControlRoom {
       this.video.removeAttribute("src");
       this.simulation ??= new Simulation();
       this.painter ??= new ScenePainter(this.simulation.camera);
+      return;
+    }
+    if (source.kind === "clip" && source.id === "local-video") {
+      if (this.pendingLocalFile === null) {
+        throw new Error("choose the local video file again; its file handle is no longer available");
+      }
+      this.localDecoder = await LocalVideoDecoder.open(this.pendingLocalFile);
       return;
     }
     if (source.kind === "camera") {
@@ -531,11 +549,22 @@ export class ControlRoom {
     this.pausedHere = false;
     this.setRunState("live");
     this.detectGeneration += 1;
-    try {
-      await this.video.play();
-    } catch {
-      // Autoplay refusal on a muted, user-initiated play is not expected; if it
-      // happens the detect loop simply waits for frames.
+    if (this.localDecoder !== null) {
+      this.localDecoder.start(
+        () => undefined,
+        (error) => {
+          this.setStatus(`Video decoding stopped: ${describe(error)}`);
+          this.stop();
+          this.setRunState("ready");
+        },
+      );
+    } else {
+      try {
+        await this.video.play();
+      } catch {
+        // Autoplay refusal on a muted, user-initiated play is not expected; if it
+        // happens the detect loop simply waits for frames.
+      }
     }
     void this.detectLoop(this.detectGeneration);
   }
@@ -546,6 +575,7 @@ export class ControlRoom {
     this.grab = null;
     this.detectGeneration += 1;
     this.video.pause();
+    this.localDecoder?.stop();
     if (wasRunning) {
       this.setRunState("paused");
     }
@@ -633,9 +663,9 @@ export class ControlRoom {
     let lastDetectedAt = -Infinity;
 
     while (this.running && generation === this.detectGeneration) {
-      const now = this.video.currentTime;
+      const now = this.clock();
       const spacing = this.cadence.stride / this.source.fps;
-      if (this.video.readyState < 2 || this.video.videoWidth === 0) {
+      if (this.localDecoder === null && (this.video.readyState < 2 || this.video.videoWidth === 0)) {
         await nextFrame();
         continue;
       }
@@ -651,7 +681,8 @@ export class ControlRoom {
         // number that left them out would not be the frame time the page is
         // actually achieving.
         const started = performance.now();
-        const input = letterbox(this.video, MODEL_INPUT_SIZE);
+        const frameSource = this.localDecoder?.canvas ?? this.video;
+        const input = letterbox(frameSource, MODEL_INPUT_SIZE);
         const output = (await session.session.run({
           [session.inputName]: makeTensor(input.tensor, [1, 3, input.size, input.size]),
         })) as Record<string, { data: Float32Array; dims: readonly number[] }>;
@@ -830,7 +861,14 @@ export class ControlRoom {
         events: this.events,
         now: this.clock(),
         dpr,
-        source: simulation === null && this.video.readyState >= 2 ? this.video : null,
+        source:
+          simulation !== null
+            ? null
+            : this.localDecoder !== null
+              ? this.localDecoder.canvas
+              : this.video.readyState >= 2
+                ? this.video
+                : null,
         paint:
           simulation !== null && painter !== null
             ? (ctx, resolution) => {
@@ -863,7 +901,7 @@ export class ControlRoom {
     if (this.source.kind === "simulation") {
       return this.simulation?.clock ?? 0;
     }
-    return this.video.currentTime;
+    return this.localDecoder?.currentTime ?? this.video.currentTime;
   }
 
   /** Advance the simulated road by the wall time since the last frame, and
@@ -1077,9 +1115,15 @@ export class ControlRoom {
     }
     if (this.pausedHere || !this.stageVisible || document.hidden) {
       this.video.pause();
+      this.localDecoder?.stop();
       return;
     }
-    if (this.video.paused) {
+    if (this.localDecoder !== null) {
+      this.localDecoder.start(
+        () => undefined,
+        (error) => this.setStatus(`Video decoding stopped: ${describe(error)}`),
+      );
+    } else if (this.video.paused) {
       // A refused autoplay only means the preview stays on its first frame.
       void this.video.play().catch(() => undefined);
     }
@@ -1132,6 +1176,8 @@ export class ControlRoom {
   /** Stop and empty the player, so nothing keeps playing under a source that
    * failed to open. */
   private detachVideo(): void {
+    this.localDecoder?.dispose();
+    this.localDecoder = null;
     this.video.pause();
     this.releaseCamera();
     this.video.srcObject = null;
