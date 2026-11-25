@@ -36,6 +36,7 @@ import { MODEL_CONTENT_VERSION, MODEL_INPUT_SIZE, MODEL_URL } from "../model-ass
 import { probeBackend } from "../runtime/backend";
 import type { BackendProbe } from "../runtime/backend";
 import { letterbox } from "../runtime/preprocess";
+import { LocalVideoDecoder } from "../runtime/local-video";
 import { decodeYolo } from "../runtime/postprocess";
 import { ORT_ENTRY, browserDeps, createSession, vendoredUrl } from "../runtime/session";
 import type { RuntimeSession } from "../runtime/session";
@@ -107,8 +108,12 @@ export class ControlRoom {
   private readonly video: HTMLVideoElement;
   private readonly videoCtx: CanvasRenderingContext2D;
   private readonly reducedMotion: boolean;
+  private localDecoder: LocalVideoDecoder | null = null;
+  private pendingLocalFile: File | null = null;
 
   private source: SourceSpec = SOURCES[0] as SourceSpec;
+  /** Object URL for a visitor-selected video; revoked when that source is left. */
+  private localVideoUrl: string | null = null;
   private frameSize = { width: 0, height: 0 };
   private gate: Segment = { start: [0, 0], end: [1, 1] };
   private pipeline: SessionPipeline | null = null;
@@ -213,9 +218,14 @@ export class ControlRoom {
   async start(): Promise<void> {
     installThemeToggle(this.elements.themeToggle);
 
-    renderSwitcher(this.elements.switcher, this.source.id, (id) => {
-      void this.selectSource(sourceById(id));
-    });
+    renderSwitcher(
+      this.elements.switcher,
+      this.source.id,
+      (id) => {
+        void this.selectSource(sourceById(id));
+      },
+      (file) => this.selectLocalVideo(file),
+    );
     for (const button of [this.elements.startButton, this.elements.launchButton]) {
       button.addEventListener("click", () => {
         void this.toggleRunning();
@@ -250,12 +260,66 @@ export class ControlRoom {
 
   // -- sources ----------------------------------------------------------------
 
+  /** Attach a file chosen by the visitor without sending its bytes anywhere. */
+  private selectLocalVideo(file: File): void {
+    const extension = file.name.toLowerCase().split(".").pop() ?? "";
+    const supportedExtensions = ["mp4", "webm", "mov", "m4v", "ogv"];
+    if (!file.type.startsWith("video/") && !supportedExtensions.includes(extension)) {
+      this.setStatus("Choose a video file, such as MP4, WebM or MOV.");
+      return;
+    }
+
+    this.pendingLocalFile = file;
+    const url = URL.createObjectURL(file);
+    const source: SourceSpec = {
+      id: "local-video",
+      label: "Your video",
+      kind: "clip",
+      url,
+      fps: 30,
+      classes: [
+        [0, "person"],
+        [1, "bicycle"],
+        [2, "car"],
+        [3, "motorcycle"],
+        [5, "bus"],
+        [7, "truck"],
+      ],
+      gate: {
+        name: "midline",
+        start: [0, 0.5],
+        end: [1, 0.5],
+        labelPositive: "in",
+        labelNegative: "out",
+        expectedDirection: null,
+      },
+      calibrated: false,
+      caption: `${file.name}. Selected from this device; processed in this browser tab.`,
+    };
+    void this.selectSource(source);
+  }
+
   private async selectSource(source: SourceSpec): Promise<void> {
     // Carry "running" across a switch only where nothing new would start
     // without being asked for: the detector is downloaded on a click on Start,
     // never because a tab was changed while the simulation was moving.
     const wasRunning = this.running && (source.kind === "simulation" || this.session !== null);
     this.stop();
+    this.localDecoder?.dispose();
+    this.localDecoder = null;
+    if (source.id !== "local-video") {
+      this.pendingLocalFile = null;
+    }
+    if (this.localVideoUrl !== null && source.url !== this.localVideoUrl) {
+      this.video.pause();
+      this.video.srcObject = null;
+      this.video.removeAttribute("src");
+      this.video.load();
+      this.releaseLocalVideo();
+    }
+    if (source.id === "local-video" && source.url !== null) {
+      this.localVideoUrl = source.url;
+    }
     this.pausedHere = false;
     if (this.runState === "paused") {
       // A pause belonged to the clip being left; the new one has not started.
@@ -276,8 +340,15 @@ export class ControlRoom {
     this.clearSession();
     this.readout.reset();
 
+    let localDecoder: LocalVideoDecoder | null = null;
     try {
       await this.attachSource(source);
+      // Read through a method because TypeScript cannot see the assignment
+      // performed inside attachSource() when narrowing this property.
+      localDecoder = this.currentLocalDecoder();
+      if (localDecoder !== null) {
+        this.source = { ...source, fps: localDecoder.fps };
+      }
     } catch (error) {
       this.setStatus(
         source.kind === "camera"
@@ -298,7 +369,9 @@ export class ControlRoom {
     this.frameSize =
       source.kind === "simulation"
         ? { width: CAMERA.width, height: CAMERA.height }
-        : { width: this.video.videoWidth, height: this.video.videoHeight };
+        : localDecoder !== null
+          ? { width: localDecoder.canvas.width, height: localDecoder.canvas.height }
+          : { width: this.video.videoWidth, height: this.video.videoHeight };
     this.gate = gateSegment(source, this.frameSize);
     this.pipeline = this.buildPipeline();
     this.setPlayable(true);
@@ -323,6 +396,11 @@ export class ControlRoom {
     this.renderFrame();
   }
 
+  /** Read decoder state after async source attachment without stale narrowing. */
+  private currentLocalDecoder(): LocalVideoDecoder | null {
+    return this.localDecoder;
+  }
+
   private async attachSource(source: SourceSpec): Promise<void> {
     if (source.kind === "simulation") {
       // No video: the page draws the frames itself.
@@ -332,6 +410,13 @@ export class ControlRoom {
       this.video.removeAttribute("src");
       this.simulation ??= new Simulation();
       this.painter ??= new ScenePainter(this.simulation.camera);
+      return;
+    }
+    if (source.kind === "clip" && source.id === "local-video") {
+      if (this.pendingLocalFile === null) {
+        throw new Error("choose the local video file again; its file handle is no longer available");
+      }
+      this.localDecoder = await LocalVideoDecoder.open(this.pendingLocalFile);
       return;
     }
     if (source.kind === "camera") {
@@ -345,9 +430,14 @@ export class ControlRoom {
       this.releaseCamera();
       this.video.srcObject = null;
       this.video.src = new URL(source.url as string, document.baseURI).href;
+    }
+    // Register listeners before explicitly starting the clip load, so an
+    // immediate decode/unsupported-source error is not missed.
+    const metadata = this.awaitMetadata();
+    if (source.kind === "clip") {
       this.video.load();
     }
-    await this.awaitMetadata();
+    await metadata;
     if (source.kind === "camera") {
       // A live stream has nothing to seek to and no first frame until it plays.
       await this.video.play();
@@ -361,7 +451,47 @@ export class ControlRoom {
     if (this.video.readyState >= 1 && this.video.videoWidth > 0) {
       return Promise.resolve();
     }
-    return once(this.video, "loadedmetadata", 15000).then(() => undefined);
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        this.video.removeEventListener("loadedmetadata", onLoaded);
+        this.video.removeEventListener("error", onError);
+        this.video.removeEventListener("abort", onAbort);
+      };
+      const finish = (error?: Error): void => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        if (error) reject(error);
+        else resolve();
+      };
+      const onLoaded = (): void => {
+        if (this.video.videoWidth > 0 && this.video.videoHeight > 0) {
+          finish();
+        } else {
+          finish(new Error("loadedmetadata arrived without usable video dimensions"));
+        }
+      };
+      const onError = (): void => finish(new Error(describeMediaError(this.video)));
+      const onAbort = (): void => finish(new Error(
+        `video loading was aborted; ${describeMediaError(this.video)}`,
+      ));
+      const timer = setTimeout(() => {
+        finish(new Error(
+          `timed out waiting for loadedmetadata (readyState=${this.video.readyState}, ` +
+          `networkState=${this.video.networkState}, dimensions=${this.video.videoWidth}x${this.video.videoHeight}; ` +
+          describeMediaError(this.video) + ")",
+        ));
+      }, 15000);
+
+      this.video.addEventListener("loadedmetadata", onLoaded);
+      this.video.addEventListener("error", onError);
+      this.video.addEventListener("abort", onAbort);
+      // The error may have been raised while the source was being assigned.
+      if (this.video.error !== null) onError();
+      else if (this.video.readyState >= 1) onLoaded();
+    });
   }
 
   private buildPipeline(): SessionPipeline {
@@ -431,11 +561,22 @@ export class ControlRoom {
     this.pausedHere = false;
     this.setRunState("live");
     this.detectGeneration += 1;
-    try {
-      await this.video.play();
-    } catch {
-      // Autoplay refusal on a muted, user-initiated play is not expected; if it
-      // happens the detect loop simply waits for frames.
+    if (this.localDecoder !== null) {
+      this.localDecoder.start(
+        () => undefined,
+        (error) => {
+          this.setStatus(`Video decoding stopped: ${describe(error)}`);
+          this.stop();
+          this.setRunState("ready");
+        },
+      );
+    } else {
+      try {
+        await this.video.play();
+      } catch {
+        // Autoplay refusal on a muted, user-initiated play is not expected; if it
+        // happens the detect loop simply waits for frames.
+      }
     }
     void this.detectLoop(this.detectGeneration);
   }
@@ -446,6 +587,7 @@ export class ControlRoom {
     this.grab = null;
     this.detectGeneration += 1;
     this.video.pause();
+    this.localDecoder?.stop();
     if (wasRunning) {
       this.setRunState("paused");
     }
@@ -533,9 +675,9 @@ export class ControlRoom {
     let lastDetectedAt = -Infinity;
 
     while (this.running && generation === this.detectGeneration) {
-      const now = this.video.currentTime;
+      const now = this.clock();
       const spacing = this.cadence.stride / this.source.fps;
-      if (this.video.readyState < 2 || this.video.videoWidth === 0) {
+      if (this.localDecoder === null && (this.video.readyState < 2 || this.video.videoWidth === 0)) {
         await nextFrame();
         continue;
       }
@@ -551,7 +693,8 @@ export class ControlRoom {
         // number that left them out would not be the frame time the page is
         // actually achieving.
         const started = performance.now();
-        const input = letterbox(this.video, MODEL_INPUT_SIZE);
+        const frameSource = this.localDecoder?.canvas ?? this.video;
+        const input = letterbox(frameSource, MODEL_INPUT_SIZE);
         const output = (await session.session.run({
           [session.inputName]: makeTensor(input.tensor, [1, 3, input.size, input.size]),
         })) as Record<string, { data: Float32Array; dims: readonly number[] }>;
@@ -730,7 +873,14 @@ export class ControlRoom {
         events: this.events,
         now: this.clock(),
         dpr,
-        source: simulation === null && this.video.readyState >= 2 ? this.video : null,
+        source:
+          simulation !== null
+            ? null
+            : this.localDecoder !== null
+              ? this.localDecoder.canvas
+              : this.video.readyState >= 2
+                ? this.video
+                : null,
         paint:
           simulation !== null && painter !== null
             ? (ctx, resolution) => {
@@ -763,7 +913,7 @@ export class ControlRoom {
     if (this.source.kind === "simulation") {
       return this.simulation?.clock ?? 0;
     }
-    return this.video.currentTime;
+    return this.localDecoder?.currentTime ?? this.video.currentTime;
   }
 
   /** Advance the simulated road by the wall time since the last frame, and
@@ -977,9 +1127,15 @@ export class ControlRoom {
     }
     if (this.pausedHere || !this.stageVisible || document.hidden) {
       this.video.pause();
+      this.localDecoder?.stop();
       return;
     }
-    if (this.video.paused) {
+    if (this.localDecoder !== null) {
+      this.localDecoder.start(
+        () => undefined,
+        (error) => this.setStatus(`Video decoding stopped: ${describe(error)}`),
+      );
+    } else if (this.video.paused) {
       // A refused autoplay only means the preview stays on its first frame.
       void this.video.play().catch(() => undefined);
     }
@@ -1032,11 +1188,15 @@ export class ControlRoom {
   /** Stop and empty the player, so nothing keeps playing under a source that
    * failed to open. */
   private detachVideo(): void {
+    this.localDecoder?.dispose();
+    this.localDecoder = null;
+    this.pendingLocalFile = null;
     this.video.pause();
     this.releaseCamera();
     this.video.srcObject = null;
     this.video.removeAttribute("src");
     this.video.load();
+    this.releaseLocalVideo();
   }
 
   private renderPanels(): void {
@@ -1091,6 +1251,13 @@ export class ControlRoom {
       }
     }
   }
+
+  private releaseLocalVideo(): void {
+    if (this.localVideoUrl !== null) {
+      URL.revokeObjectURL(this.localVideoUrl);
+      this.localVideoUrl = null;
+    }
+  }
 }
 
 // -- helpers ------------------------------------------------------------------
@@ -1127,6 +1294,20 @@ function once(target: EventTarget, type: string, timeoutMs: number): Promise<Eve
 
 function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function describeMediaError(video: HTMLVideoElement): string {
+  const error = video.error;
+  if (error === null) return "no MediaError details are available";
+  const labels: Record<number, string> = {
+    1: "MEDIA_ERR_ABORTED",
+    2: "MEDIA_ERR_NETWORK",
+    3: "MEDIA_ERR_DECODE",
+    4: "MEDIA_ERR_SRC_NOT_SUPPORTED",
+  };
+  const label = labels[error.code] ?? "unknown media error";
+  const detail = error.message.trim();
+  return `browser media error ${error.code} (${label})${detail ? `: ${detail}` : ""}`;
 }
 
 /** Boot the demo and keep drawing. */

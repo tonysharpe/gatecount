@@ -333,27 +333,55 @@ export function renderSwitcher(
   container: HTMLElement,
   selected: string,
   onSelect: (id: string) => void,
+  onFileSelected: (file: File) => void,
 ): void {
-  container.replaceChildren(
-    ...SOURCES.map((source) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      const icon = sourceIcon(source.id);
-      const label = document.createElement("span");
-      label.textContent = source.label;
-      button.append(...(icon === null ? [] : [icon]), label);
-      button.setAttribute("aria-pressed", String(source.id === selected));
-      button.addEventListener("click", () => {
-        onSelect(source.id);
-      });
-      return button;
-    }),
-  );
+  const sourceButtons = SOURCES.map((source) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.dataset["sourceId"] = source.id;
+    const icon = sourceIcon(source.id);
+    const label = document.createElement("span");
+    label.textContent = source.label;
+    button.append(...(icon === null ? [] : [icon]), label);
+    button.setAttribute("aria-pressed", String(source.id === selected));
+    button.addEventListener("click", () => {
+      onSelect(source.id);
+    });
+    return button;
+  });
+
+  const fileInput = document.createElement("input");
+  fileInput.type = "file";
+  fileInput.accept = "video/*";
+  fileInput.hidden = true;
+  fileInput.tabIndex = -1;
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files?.[0];
+    if (file !== undefined) {
+      onFileSelected(file);
+    }
+    // Allow choosing the same file again after switching to another source.
+    fileInput.value = "";
+  });
+
+  const localButton = document.createElement("button");
+  localButton.type = "button";
+  localButton.dataset["sourceId"] = "local-video";
+  localButton.setAttribute("aria-label", "Choose a video from this device");
+  const localLabel = document.createElement("span");
+  localLabel.textContent = "Your video";
+  localButton.append(localLabel);
+  localButton.setAttribute("aria-pressed", String(selected === "local-video"));
+  localButton.addEventListener("click", () => {
+    fileInput.click();
+  });
+
+  container.replaceChildren(...sourceButtons, localButton, fileInput);
 }
 
 export function markSelectedSource(container: HTMLElement, selected: string): void {
-  const buttons = [...container.querySelectorAll("button")];
-  buttons.forEach((button, index) => {
-    button.setAttribute("aria-pressed", String(SOURCES[index]?.id === selected));
+  const buttons = [...container.querySelectorAll<HTMLButtonElement>("button[data-source-id]")];
+  buttons.forEach((button) => {
+    button.setAttribute("aria-pressed", String(button.dataset["sourceId"] === selected));
   });
 }
