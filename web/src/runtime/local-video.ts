@@ -192,8 +192,8 @@ export class LocalVideoDecoder {
     onError: (error: unknown) => void,
   ): Promise<void> {
     try {
+      let startPosition = this.position;
       while (this.isActive(generation)) {
-        const startPosition = this.position;
         const wallStart = performance.now() - startPosition * 1000;
         let frameCount = 0;
 
@@ -227,7 +227,10 @@ export class LocalVideoDecoder {
         if (frameCount === 0) {
           throw new Error("the decoder returned no video frames");
         }
-        this.position = 0;
+        // Start the next iterator at the beginning, but keep currentTime at
+        // the last displayed frame until the first new frame is drawn. This
+        // prevents the detector from pairing a reset clock with the old canvas.
+        startPosition = 0;
       }
     } catch (error) {
       if (this.isActive(generation)) {
