@@ -1,8 +1,8 @@
 /**
- * Local-file video decoding for codecs the browser's HTMLMediaElement cannot
- * demux. Mediabunny demuxes the selected File and HEVC.js supplies a WebAssembly
- * decoder when WebCodecs does not support the track. The file is never sent to
- * a server; only the decoder modules and WASM assets are fetched.
+ * Local-file decoding for formats the browser's HTMLMediaElement cannot open.
+ * Mediabunny demuxes the selected File and HEVC.js supplies a WebAssembly
+ * decoder where WebCodecs does not support the HEVC profile. Video bytes stay
+ * in this browser tab; only decoder modules and WASM assets are fetched.
  */
 
 type DecodedSample = {
@@ -17,6 +17,7 @@ type VideoTrack = {
   getDisplayWidth(): Promise<number>;
   getDisplayHeight(): Promise<number>;
   getFirstTimestamp(): Promise<number>;
+  computeDuration(): Promise<number>;
 };
 
 type InputHandle = {
@@ -26,7 +27,7 @@ type InputHandle = {
 
 type SampleSink = {
   getSample(timestamp: number): Promise<DecodedSample | null>;
-  samples(): AsyncGenerator<DecodedSample, void, unknown>;
+  samples(startTimestamp?: number, endTimestamp?: number): AsyncGenerator<DecodedSample, void, unknown>;
 };
 
 type MediabunnyModule = {
@@ -57,8 +58,6 @@ const HEVC_WASM_BINARY_URL =
 let decoderRegistration: Promise<void> | null = null;
 
 async function registerDecoder(): Promise<MediabunnyModule> {
-  // The import map in index.html maps the plugin's peer import to this exact
-  // Mediabunny module URL, so registration and the app share one registry.
   const mediabunny = (await import(
     /* @vite-ignore */ MEDIABUNNY_MODULE_URL
   )) as MediabunnyModule;
@@ -76,7 +75,7 @@ async function registerDecoder(): Promise<MediabunnyModule> {
   return mediabunny;
 }
 
-/** Decodes a local File to a reusable canvas at the original display size. */
+/** Decodes a local File into a reusable canvas, preserving source timestamps. */
 export class LocalVideoDecoder {
   readonly canvas: HTMLCanvasElement;
   readonly fps: number;
@@ -88,6 +87,7 @@ export class LocalVideoDecoder {
   private playing = false;
   private disposed = false;
   private generation = 0;
+  private position = 0;
 
   private constructor(
     input: InputHandle,
@@ -103,6 +103,14 @@ export class LocalVideoDecoder {
     this.firstTimestamp = firstTimestamp;
     this.fps = fps;
     this.duration = duration;
+  }
+
+  get currentTime(): number {
+    return this.position;
+  }
+
+  get isPlaying(): boolean {
+    return this.playing;
   }
 
   static async open(file: File): Promise<LocalVideoDecoder> {
@@ -149,7 +157,8 @@ export class LocalVideoDecoder {
       firstSample.draw(context, 0, 0);
       firstSample.close();
 
-      const duration = Math.max(0, await track.getDurationFromMetadataSafe?.() ?? 0);
+      const endTimestamp = await track.computeDuration();
+      const duration = Math.max(0, endTimestamp - firstTimestamp);
       return new LocalVideoDecoder(input, sink, canvas, firstTimestamp, fps, duration);
     } catch (error) {
       input.dispose();
@@ -159,6 +168,7 @@ export class LocalVideoDecoder {
 
   start(onFrame: (timestamp: number) => void, onError: (error: unknown) => void): void {
     if (this.disposed || this.playing) return;
+    if (this.duration > 0 && this.position >= this.duration) this.position = 0;
     this.playing = true;
     const generation = ++this.generation;
     void this.playLoop(generation, onFrame, onError);
@@ -183,10 +193,11 @@ export class LocalVideoDecoder {
   ): Promise<void> {
     try {
       while (this.isActive(generation)) {
-        const wallStart = performance.now();
+        const startPosition = this.position;
+        const wallStart = performance.now() - startPosition * 1000;
         let frameCount = 0;
 
-        for await (const sample of this.sink.samples()) {
+        for await (const sample of this.sink.samples(this.firstTimestamp + startPosition)) {
           if (!this.isActive(generation)) {
             sample.close();
             return;
@@ -205,6 +216,7 @@ export class LocalVideoDecoder {
               throw new Error("the decoded-frame canvas lost its 2D context");
             }
             sample.draw(context, 0, 0);
+            this.position = timestamp;
             frameCount += 1;
             onFrame(timestamp);
           } finally {
@@ -215,6 +227,7 @@ export class LocalVideoDecoder {
         if (frameCount === 0) {
           throw new Error("the decoder returned no video frames");
         }
+        this.position = 0;
       }
     } catch (error) {
       if (this.isActive(generation)) {
