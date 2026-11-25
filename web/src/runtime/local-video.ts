@@ -60,9 +60,11 @@ const FFMPEG_MODULE_URL =
   "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
 const FFMPEG_CORE_BASE_URL =
   "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm";
+const FFMPEG_CLASS_WORKER_URL =
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/worker.js";
 
 type BrowserFFmpeg = {
-  load(options: { coreURL: string; wasmURL: string }): Promise<void>;
+  load(options: { coreURL: string; wasmURL: string; classWorkerURL: string }): Promise<void>;
   writeFile(path: string, data: Uint8Array): Promise<void>;
   exec(args: string[]): Promise<number>;
   readFile(path: string): Promise<Uint8Array | string>;
@@ -95,7 +97,8 @@ async function getBrowserFFmpeg(): Promise<BrowserFFmpeg> {
     });
     const coreURL = await fetchBlobUrl(FFMPEG_CORE_BASE_URL + "/ffmpeg-core.js", "text/javascript");
     const wasmURL = await fetchBlobUrl(FFMPEG_CORE_BASE_URL + "/ffmpeg-core.wasm", "application/wasm");
-    await ffmpeg.load({ coreURL, wasmURL });
+    const classWorkerURL = await fetchBlobUrl(FFMPEG_CLASS_WORKER_URL, "text/javascript");
+    await ffmpeg.load({ coreURL, wasmURL, classWorkerURL });
     return ffmpeg;
   })();
   return ffmpegInstance;
