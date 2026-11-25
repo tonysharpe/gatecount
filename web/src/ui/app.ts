@@ -307,6 +307,9 @@ export class ControlRoom {
     this.stop();
     this.localDecoder?.dispose();
     this.localDecoder = null;
+    if (source.id !== "local-video") {
+      this.pendingLocalFile = null;
+    }
     if (this.localVideoUrl !== null && source.url !== this.localVideoUrl) {
       this.video.pause();
       this.video.srcObject = null;
@@ -1178,6 +1181,7 @@ export class ControlRoom {
   private detachVideo(): void {
     this.localDecoder?.dispose();
     this.localDecoder = null;
+    this.pendingLocalFile = null;
     this.video.pause();
     this.releaseCamera();
     this.video.srcObject = null;
