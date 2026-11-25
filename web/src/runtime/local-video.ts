@@ -56,6 +56,97 @@ const HEVC_WASM_GLUE_URL =
 const HEVC_WASM_BINARY_URL =
   "https://cdn.jsdelivr.net/npm/@hevcjs/core@1.9.1/wasm/hevc-decode.wasm";
 
+const FFMPEG_MODULE_URL =
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/esm/index.js";
+const FFMPEG_CORE_BASE_URL =
+  "https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/esm";
+
+type BrowserFFmpeg = {
+  load(options: { coreURL: string; wasmURL: string }): Promise<void>;
+  writeFile(path: string, data: Uint8Array): Promise<void>;
+  exec(args: string[]): Promise<number>;
+  readFile(path: string): Promise<Uint8Array | string>;
+  deleteFile(path: string): Promise<void>;
+  on(event: "log", callback: (event: { message: string }) => void): void;
+};
+
+type BrowserFFmpegModule = { FFmpeg: new () => BrowserFFmpeg };
+let ffmpegInstance: Promise<BrowserFFmpeg> | null = null;
+const ffmpegAssetUrls: string[] = [];
+const ffmpegLog: string[] = [];
+
+async function fetchBlobUrl(url: string, mimeType: string): Promise<string> {
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error("Could not download local-video support asset (" + response.status + "): " + url);
+  }
+  const objectUrl = URL.createObjectURL(new Blob([await response.arrayBuffer()], { type: mimeType }));
+  ffmpegAssetUrls.push(objectUrl);
+  return objectUrl;
+}
+
+async function getBrowserFFmpeg(): Promise<BrowserFFmpeg> {
+  ffmpegInstance ??= (async () => {
+    const module = (await import(/* @vite-ignore */ FFMPEG_MODULE_URL)) as BrowserFFmpegModule;
+    const ffmpeg = new module.FFmpeg();
+    ffmpeg.on("log", ({ message }) => {
+      ffmpegLog.push(message);
+      if (ffmpegLog.length > 30) ffmpegLog.shift();
+    });
+    const coreURL = await fetchBlobUrl(FFMPEG_CORE_BASE_URL + "/ffmpeg-core.js", "text/javascript");
+    const wasmURL = await fetchBlobUrl(FFMPEG_CORE_BASE_URL + "/ffmpeg-core.wasm", "application/wasm");
+    await ffmpeg.load({ coreURL, wasmURL });
+    return ffmpeg;
+  })();
+  return ffmpegInstance;
+}
+
+/**
+ * Hikvision IMKH exports contain an MPEG program stream with a proprietary
+ * prefix. FFmpeg recognises this variant. Remux video packets into an
+ * in-memory MP4 using stream copy (no video re-encoding). The source File
+ * remains unchanged and is never uploaded.
+ */
+async function prepareLocalVideoFile(file: File): Promise<File> {
+  const signature = new TextDecoder().decode(new Uint8Array(await file.slice(0, 4).arrayBuffer()));
+  if (signature !== "IMKH") return file;
+
+  ffmpegLog.length = 0;
+  const ffmpeg = await getBrowserFFmpeg();
+  const inputPath = "hikvision-source.imkh";
+  const outputPath = "hikvision-remuxed.mp4";
+  try {
+    await ffmpeg.writeFile(inputPath, new Uint8Array(await file.arrayBuffer()));
+    const exitCode = await ffmpeg.exec([
+      "-f", "mpeg",
+      "-probesize", "50000000",
+      "-analyzeduration", "100000000",
+      "-fflags", "+genpts",
+      "-i", inputPath,
+      "-map", "0:v:0",
+      "-c:v", "copy",
+      "-an",
+      "-movflags", "+faststart",
+      outputPath,
+    ]);
+    if (exitCode !== 0) {
+      throw new Error("FFmpeg remux exited with code " + exitCode + ". " + ffmpegLog.slice(-8).join(" | "));
+    }
+    const result = await ffmpeg.readFile(outputPath);
+    if (typeof result === "string" || result.byteLength === 0) {
+      throw new Error("FFmpeg did not produce a video file.");
+    }
+    const bytes = new Uint8Array(result);
+    const outputBuffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    return new File([outputBuffer], file.name + ".remuxed.mp4", { type: "video/mp4" });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error("Hikvision IMKH remux failed: " + detail + ". Recent FFmpeg output: " + (ffmpegLog.slice(-8).join(" | ") || "(none)"));
+  } finally {
+    await Promise.all([inputPath, outputPath].map((name) => ffmpeg.deleteFile(name).catch(() => undefined)));
+  }
+}
+
 let decoderRegistration: Promise<void> | null = null;
 
 async function registerDecoder(): Promise<MediabunnyModule> {
@@ -130,9 +221,10 @@ export class LocalVideoDecoder {
 
   static async open(file: File): Promise<LocalVideoDecoder> {
     const probe = await inspectLocalFile(file);
+    const preparedFile = await prepareLocalVideoFile(file);
     const mediabunny = await registerDecoder();
     const input = new mediabunny.Input({
-      source: new mediabunny.BlobSource(file),
+      source: new mediabunny.BlobSource(preparedFile),
       formats: mediabunny.ALL_FORMATS,
     });
 
